@@ -157,7 +157,36 @@ class SampleTest(unittest.TestCase):
         self.assertEqual(g[g.index("G1 Z0.2 F600") + 1:g.index("G1 Z0.2 F600") + 3],
                          ["G1 E0.8 F2400", "G10"])
         self.assertIn("M106 S128", g)
-        self.assertEqual(g[-3:], ["M26 S%d" % travel, "M117 Printing", "M24"])
+        self.assertEqual(g[-4:], ["M26 S%d" % travel, "M117 Printing", "M24",
+                                  "UPDATE_DELAYED_GCODE ID=PLR_SPEED DURATION=1"])
+        # Heated to the print temperatures before anything moves
+        lift = next(i for i, line in enumerate(g) if line.startswith("G1 "))
+        self.assertLess(g.index("M109 S215"), lift)
+        self.assertLess(g.index("M190 S60"), g.index("M109 S215"))
+
+    def test_slow_until_next_layer(self):
+        # Halfway through layer 1: slow until the first extruding move of layer 2,
+        # past the z-hop travel and the unretract
+        arc = self.offsets["G3 X90 Y110 I-10 J0 E1.2"]
+        cp, m = make_checkpoint(self.path, self.offsets["G1 X110 Y110 E1.0"], arc, 0.5)
+        p = plr.plan(cp, self.path)
+        layer2 = next(o for o, t in plr.iter_lines(self.path)
+                      if o > self.offsets["G1 F1500"] and t == "G1 X110 Y90 E1.0")
+        self.assertEqual(p["next_layer_offset"], layer2)
+        g = plr.resume_gcode(p)
+        self.assertIn("M220 S{slow}", g)
+        self.assertNotIn("M220 S100", g)
+        text, error = plr.build_cfg(cp, p, "/tmp/v.cfg")
+        self.assertIsNone(error)
+        self.assertIn("[delayed_gcode PLR_SPEED]", text)
+        self.assertIn("file_position < %d %%}" % p["next_layer_offset"], text)
+        self.assertIn("    M220 S100", text)
+
+    def test_last_layer_slow_until_end(self):
+        travel = self.offsets["G1 X90 Y90 Z.4 F12000"]
+        cp, m = make_checkpoint(self.path, self.offsets["G1 X110 Y110 E1.0"], travel, 0.5)
+        p = plr.plan(cp, self.path)
+        self.assertEqual(p["next_layer_offset"], os.path.getsize(self.path))
 
     def test_end_of_move_resumes_next_line(self):
         cp, m = make_checkpoint(self.path, self.offsets["G1 X90 Y90 E1.0"],

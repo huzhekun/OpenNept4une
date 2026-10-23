@@ -75,6 +75,7 @@ includes with `[include plr/*.cfg]`. It contains:
 | `[gcode_macro PLR_RESUME]` | Resumes the print. Its variables `checkpoint`, `filename` and `error` describe it. |
 | `[gcode_macro PLR_DISCARD]` | Drops the recovery data. |
 | `[delayed_gcode PLR_WATCH]` | Drops the recovery data if another print is started instead. |
+| `[delayed_gcode PLR_SPEED]` | Restores the speed once the resumed layer is done (see step 7). |
 | `[bed_mesh plr]` | The bed mesh that was active, usually the adaptive mesh from the print start (see below). |
 | `[save_variables]` | Stores `plr_handled` in `~/printer_data/plr/variables.cfg`. Left out if the configuration already has a `[save_variables]` section; then that one is used. |
 
@@ -98,18 +99,24 @@ gives the same correction, to the 6 decimals Klipper reports. Fade
 1. Clears the bed mesh and the G-code offset, and starts heating the bed.
 2. Tells Klipper where the axes are with `SET_KINEMATIC_POSITION`. Z keeps its
    place without power (lead screws), and X/Y are homed later.
-3. Waits for the bed. Heats the nozzle to 170 °C (or the print temperature if
-   that's lower), so that it comes free of the plastic without oozing much, and
-   lifts it 5 mm.
-4. Starts heating the nozzle to the print temperature and homes X and Y. Z
-   isn't homed, because the probe would hit the print.
+3. Heats the bed, then the nozzle, back to the print temperatures before
+   anything moves, so that the nozzle comes free of the plastic it stopped in.
+   The bed goes first so that the nozzle isn't hot against the print for
+   longer than needed. Then it lifts the nozzle 5 mm.
+4. Homes X and Y. Z isn't homed, because the probe would hit the print.
 5. Restores the G-code offset (baby-stepping included) and loads the saved
    mesh.
 6. At the back-left corner it waits for the nozzle, purges 30 mm (or the
    `PURGE` parameter) and retracts.
-7. Restores the speed and flow factors, velocity limits, pressure advance,
-   firmware retraction settings and fan speed: first the values in the
-   checkpoint, then the ones the file had set at the resume line.
+7. Restores the flow factor, velocity limits, pressure advance, firmware
+   retraction settings and fan speed: first the values in the checkpoint, then
+   the ones the file had set at the resume line. The rest of the layer the
+   print resumes in is printed at 25% of the speed at the power loss (`M220`;
+   the `SPEED` parameter changes it), for the new plastic to bond to the cooled
+   layer below. `plr.py` finds where the next layer starts (the first extruding
+   move at a higher Z, so z-hops don't count), and `PLR_SPEED` restores the
+   speed when Klipper reaches it or the print ends, unless the speed was
+   changed in the meantime.
 8. Travels to where the resume line starts, lowers the nozzle to its Z, and
    sets the extruder up the way the file expects there: primed, or retracted
    by the slicer or with `G10`. Sets the E position, the absolute or relative
@@ -121,7 +128,7 @@ gives the same correction, to the 6 decimals Klipper reports. Fade
 
 The touch screen asks whether to resume (see below). Without it, run
 `PLR_RESUME` or `PLR_DISCARD` from Mainsail or Fluidd. `PLR_RESUME PURGE=0`
-skips the purge.
+skips the purge, and `PLR_RESUME SPEED=100` resumes at full speed.
 
 ### Touch screen
 
@@ -135,6 +142,10 @@ reason the print can't be resumed. Confirm runs `PLR_RESUME`, Cancel runs
 
 ## Limits
 
+* While the power is off, the nozzle rests hot against the print, and usually
+  leaves a small blob there. It can't be retracted or lifted first: Klipper has
+  sent the motion up to 2 s ahead to the mainboard, which only an emergency
+  stop interrupts, and the motors lose power with the 24 V supply.
 * Z isn't homed. When a stepper loses power, it settles to a full step, and
   when it's enabled again the driver may pull it to a different one. On the
   Max that's up to about 0.08 mm, which shows as a line in the print.

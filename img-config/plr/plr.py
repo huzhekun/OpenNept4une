@@ -53,8 +53,12 @@ TOL_Z = 1.0      # mm, covers the bed mesh and z offset
 TOL_ALONG = 0.5  # mm, position along a move from XY vs from the extruder
 PURGE_LENGTH = 30.0
 LIFT = 5.0
-# Nozzle temperature for freeing the nozzle from the print before it's lifted
-SOFTEN_TEMP = 170.0
+# Below this the checkpoint has no usable nozzle temperature
+MIN_EXTRUDE_TEMP = 170.0
+# Speed (percent of the speed at the power loss) for the rest of the layer the
+# print resumes in, and how far ahead the next layer is looked for
+RESUME_SPEED = 25
+NEXT_LAYER_BYTES = 8 * 1024 * 1024
 
 
 class PlanError(Exception):
@@ -665,6 +669,10 @@ def plan(cp, gcode_path=None):
                             window=1)
     for offset, text in iter_lines(path, stop=resume_offset, start=start):
         model2.feed(text, offset)
+    next_layer = next_layer_offset(path, model2, resume_offset)
+    if next_layer is None:
+        warnings.append("the next layer isn't within %d MiB; resuming at full speed"
+                        % (NEXT_LAYER_BYTES // (1024 * 1024)))
     return {
         "checkpoint": cp,
         "path": path,
@@ -676,7 +684,35 @@ def plan(cp, gcode_path=None):
         "bytes_back": fp - resume_offset,
         "live": live,
         "state": model2,
+        "next_layer_offset": next_layer,
     }
+
+
+def next_layer_offset(path, model, start):
+    """Offset of the line that starts the layer after the one at start.
+
+    That is the first extruding XY move above the Z of the first one from
+    start, so z-hops and travels don't count. Returns the file size if the
+    print ends first, and None if it isn't within NEXT_LAYER_BYTES.
+    """
+    m = model.copy()
+    m.record_from = 0
+    last = None
+    layer_z = None
+    for offset, text in iter_lines(path, start=start):
+        if offset - start > NEXT_LAYER_BYTES:
+            return None
+        m.feed(text, offset)
+        mv = m.moves[-1] if m.moves else None
+        if mv is last:
+            continue
+        last = mv
+        if mv.e1 - mv.e0 > 1e-6 and (mv.arc or (mv.x0, mv.y0) != (mv.x1, mv.y1)):
+            if layer_z is None:
+                layer_z = mv.z1
+            elif mv.z1 > layer_z + 1e-3:
+                return offset
+    return os.path.getsize(path)
 
 
 def describe(p):
@@ -685,7 +721,9 @@ def describe(p):
             "layer %d, Z %s, start X%s Y%s Z%s, matched by %s" % (
                 p["resume_line"], p["resume_offset"], p["bytes_back"], p["fp_line"],
                 s.layer, _fmt(s.layer_z) if s.layer_z is not None else "?",
-                _fmt(s.pos[0]), _fmt(s.pos[1]), _fmt(s.pos[2]), p["method"]))
+                _fmt(s.pos[0]), _fmt(s.pos[1]), _fmt(s.pos[2]), p["method"])
+            + ("" if p.get("next_layer_offset") is None
+               else "; next layer at byte %d" % p["next_layer_offset"]))
 
 
 # ===== Klipper config =====
@@ -705,13 +743,12 @@ def resume_gcode(p):
     live = p["live"]
     bed_t = st.get("heater_bed", {}).get("target") or 0.0
     ext_t = ext.get("target") or 0.0
-    if cp["state"] == "paused" or ext_t < SOFTEN_TEMP:
+    if cp["state"] == "paused" or ext_t < MIN_EXTRUDE_TEMP:
         # PAUSE lowers the nozzle temperature; use the file's
         ext_t = s.start_temps.get("extruder", ext_t)
         bed_t = bed_t or s.start_temps.get("bed", 0.0)
-    if ext_t < SOFTEN_TEMP:
+    if ext_t < MIN_EXTRUDE_TEMP:
         raise PlanError("no nozzle temperature to resume with")
-    soften_t = min(SOFTEN_TEMP, ext_t)
     zmax = th["axis_maximum"][2]
     lift_z = min(live[2] + LIFT, zmax)
     park_x = th["axis_minimum"][0] + 5
@@ -728,13 +765,14 @@ def resume_gcode(p):
     a("M140 S%s" % _fmt(bed_t))
     # The axes keep their place without power, except X/Y that are homed below
     a("SET_KINEMATIC_POSITION X=%s Y=%s Z=%s" % (_fmt(live[0]), _fmt(live[1]), _fmt(live[2])))
+    # Back to the print temperatures before anything moves, so the nozzle comes
+    # free of the plastic it stopped in. The bed first, so that the nozzle
+    # isn't hot against the print for longer than needed.
     if bed_t > 0:
         a("M190 S%s" % _fmt(bed_t))
-    # Soften whatever the nozzle is stuck in before lifting it off the print
-    a("M109 S%s" % _fmt(soften_t))
+    a("M109 S%s" % _fmt(ext_t))
     a("G90")
     a("G1 Z%s F600" % _fmt(lift_z))
-    a("M104 S%s" % _fmt(ext_t))
     a("G28 X Y")
     a("SET_GCODE_OFFSET X=%s Y=%s Z=%s" % (_fmt(homing[0]), _fmt(homing[1]), _fmt(homing[2])))
     if mesh.get("profile_name"):
@@ -749,7 +787,15 @@ def resume_gcode(p):
         a("G1 X%d F12000" % dx)
     a("G90")
     # Settings at the time of the power loss, then the file's at the resume line
-    a("M220 S%s" % _fmt(gm.get("speed_factor", 1.0) * 100))
+    # Slower for the rest of this layer: PLR_SPEED restores the speed at the next
+    speed = gm.get("speed_factor", 1.0) * 100
+    slow = p.get("next_layer_offset") is not None
+    if slow:
+        a("{%% set slow = %s * params.SPEED|default(%d)|float / 100 %%}" % (_fmt(speed), RESUME_SPEED))
+        a("SET_GCODE_VARIABLE MACRO=PLR_RESUME VARIABLE=slow VALUE={slow}")
+        a("M220 S{slow}")
+    else:
+        a("M220 S%s" % _fmt(speed))
     a("M221 S%s" % _fmt(gm.get("extrude_factor", 1.0) * 100))
     a("SET_VELOCITY_LIMIT VELOCITY=%s ACCEL=%s SQUARE_CORNER_VELOCITY=%s" % (
         _fmt(th["max_velocity"]), _fmt(th["max_accel"]), _fmt(th["square_corner_velocity"])))
@@ -801,7 +847,31 @@ def resume_gcode(p):
     a("M26 S%d" % p["resume_offset"])
     a("M117 Printing")
     a("M24")
+    if slow:
+        a("UPDATE_DELAYED_GCODE ID=PLR_SPEED DURATION=1")
     return g
+
+
+def speed_section(p):
+    """[delayed_gcode PLR_SPEED], which restores the speed at the next layer.
+
+    It acts once Klipper has read up to that layer (or the print has ended),
+    unless the speed was changed in the meantime.
+    """
+    if p.get("next_layer_offset") is None:
+        return []
+    speed = _fmt(p["checkpoint"]["status"]["gcode_move"].get("speed_factor", 1.0) * 100)
+    return ["[delayed_gcode PLR_SPEED]",
+            "gcode:",
+            "  {% set slow = printer[\"gcode_macro PLR_RESUME\"].slow|float %}",
+            "  {%% if printer.print_stats.state in (\"printing\", \"paused\")"
+            " and printer.virtual_sdcard.file_position < %d %%}" % p["next_layer_offset"],
+            "    UPDATE_DELAYED_GCODE ID=PLR_SPEED DURATION=0.5",
+            "  {% elif (printer.gcode_move.speed_factor * 100 - slow)|abs < 0.01 %}",
+            "    M220 S%s" % speed,
+            "    RESPOND MSG=\"Power-loss recovery: speed back to %s%%\"" % speed,
+            "  {% endif %}",
+            ""]
 
 
 def mesh_section(st):
@@ -881,7 +951,7 @@ def build_cfg(cp, p, own_variables):
     if error is None:
         try:
             lines = resume_gcode(p)
-            out += mesh_section(cp["status"]) + [""]
+            out += mesh_section(cp["status"]) + [""] + speed_section(p)
         except PlanError as e:
             error = str(e)
     safe_name = re.sub(r"[#{}\"]", "_", filename)
@@ -890,6 +960,7 @@ def build_cfg(cp, p, own_variables):
             "variable_checkpoint: %d" % cid,
             "variable_filename: %s" % json.dumps(safe_name),
             "variable_error: %s" % json.dumps(re.sub(r"[#{}\"]", "_", error or "")),
+            "variable_slow: 0",
             "gcode:",
             "  " + handled,
             "  {% if handled %}",
