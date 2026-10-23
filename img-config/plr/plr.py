@@ -805,18 +805,29 @@ def resume_gcode(p):
 
 
 def mesh_section(st):
+    """Profile with the bed mesh that was active, as Klipper had it in memory.
+
+    The interpolated mesh from the status is saved with interpolation turned
+    off ("direct"), so loading it gives the same mesh without probing again or
+    knowing how it was interpolated. This also covers the meshes that
+    BED_MESH_CALIBRATE ADAPTIVE=1 makes, which aren't saved as profiles.
+    """
     mesh = st.get("bed_mesh", {})
     name = mesh.get("profile_name")
     if not name:
         return []
-    prof = mesh.get("profiles", {}).get(name)
-    if prof is None:
-        raise PlanError("bed mesh %s isn't available" % name)
+    grid = mesh.get("mesh_matrix") or [[]]
+    lo, hi = mesh.get("mesh_min"), mesh.get("mesh_max")
+    if (len(grid) < 2 or len(grid[0]) < 2 or any(len(row) != len(grid[0]) for row in grid)
+            or not lo or not hi or hi[0] <= lo[0] or hi[1] <= lo[1]):
+        raise PlanError("bed mesh %s wasn't saved with the checkpoint" % name)
     out = ["[bed_mesh plr]", "version: 1", "points:"]
-    for row in prof["points"]:
+    for row in grid:
         out.append("  " + ", ".join("%.6f" % v for v in row))
-    for key, value in prof["mesh_params"].items():
-        out.append("%s: %s" % (key, value))
+    params = [("min_x", lo[0]), ("max_x", hi[0]), ("min_y", lo[1]), ("max_y", hi[1]),
+              ("x_count", len(grid[0])), ("y_count", len(grid)),
+              ("mesh_x_pps", 0), ("mesh_y_pps", 0), ("algo", "direct"), ("tension", 0.2)]
+    out += ["%s: %s" % kv for kv in params]
     return out
 
 

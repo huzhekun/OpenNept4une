@@ -4,6 +4,7 @@ Set PLR_TEST_GCODE to a sliced file to also run the simulated power cuts on
 it.
 """
 
+import configparser
 import math
 import os
 import random
@@ -98,11 +99,10 @@ def make_checkpoint(path, fp, move, t, extrude_factor=1.0, homing=(0.0, 0.0, 0.0
         "fan": {"speed": 0.5},
         "firmware_retraction": {"retract_length": 0.8, "retract_speed": 40,
                                 "unretract_extra_length": 0, "unretract_speed": 30},
-        "bed_mesh": {"profile_name": "default", "profiles": {"default": {
-            "points": [[0.1, 0.2], [0.0, -0.1]],
-            "mesh_params": {"min_x": 10.0, "max_x": 397.0, "min_y": 21.0, "max_y": 404.0,
-                            "x_count": 2, "y_count": 2, "mesh_x_pps": 2, "mesh_y_pps": 2,
-                            "algo": "lagrange", "tension": 0.2}}}},
+        "bed_mesh": {"profile_name": "default", "mesh_min": [10.0, 21.0],
+                     "mesh_max": [397.0, 404.0], "probed_matrix": [[0.1, 0.2], [0.0, -0.1]],
+                     "mesh_matrix": [[0.1, 0.15, 0.2], [0.05, 0.05, 0.05], [0.0, -0.05, -0.1]],
+                     "profiles": {}},
         "exclude_object": {"excluded_objects": []},
     }
     cp = {"version": 1, "id": 1234, "time": 0, "state": "printing",
@@ -207,6 +207,59 @@ class SampleTest(unittest.TestCase):
         self.assertEqual(error, "broken")
         self.assertIn("Can't resume: broken", text)
         self.assertNotIn("M24", text)
+
+
+# bed_mesh status after BED_MESH_CALIBRATE ADAPTIVE=1 on a Neptune 4 Max:
+# 3x3 points with mesh_pps 4, not saved as a profile
+ADAPTIVE_MESH = {
+    "profile_name": "adaptive-FFFF7E23B4D0", "mesh_min": [205.0, 205.0],
+    "mesh_max": [225.0, 225.0], "profiles": {},
+    "probed_matrix": [[0.01, -0.0025, -0.0175], [0.03, 0.0125, -0.0075],
+                      [0.0375, 0.0225, 0.0]],
+    "mesh_matrix": [
+        [0.01, 0.0077, 0.0053, 0.0028, 0.0002, -0.0025, -0.0053, -0.0082, -0.0112, -0.0143,
+         -0.0175],
+        [0.015, 0.012348, 0.009612, 0.006792, 0.003888, 0.0009, -0.002172, -0.005328,
+         -0.008568, -0.011892, -0.0153],
+        [0.0195, 0.016572, 0.013568, 0.010488, 0.007332, 0.0041, 0.000792, -0.002592,
+         -0.006052, -0.009588, -0.0132],
+        [0.0235, 0.020372, 0.017168, 0.013888, 0.010532, 0.0071, 0.003592, 8e-06, -0.003652,
+         -0.007388, -0.0112],
+        [0.027, 0.023748, 0.020412, 0.016992, 0.013488, 0.0099, 0.006228, 0.002472, -0.001368,
+         -0.005292, -0.0093],
+        [0.03, 0.0267, 0.0233, 0.0198, 0.0162, 0.0125, 0.0087, 0.0048, 0.0008, -0.0033,
+         -0.0075],
+        [0.0325, 0.029228, 0.025832, 0.022312, 0.018668, 0.0149, 0.011008, 0.006992, 0.002852,
+         -0.001412, -0.0058],
+        [0.0345, 0.031332, 0.028008, 0.024528, 0.020892, 0.0171, 0.013152, 0.009048, 0.004788,
+         0.000372, -0.0042],
+        [0.036, 0.033012, 0.029828, 0.026448, 0.022872, 0.0191, 0.015132, 0.010968, 0.006608,
+         0.002052, -0.0027],
+        [0.037, 0.034268, 0.031292, 0.028072, 0.024608, 0.0209, 0.016948, 0.012752, 0.008312,
+         0.003628, -0.0013],
+        [0.0375, 0.0351, 0.0324, 0.0294, 0.0261, 0.0225, 0.0186, 0.0144, 0.0099, 0.0051, 0.0]],
+}
+
+
+class MeshTest(unittest.TestCase):
+    def test_adaptive_mesh(self):
+        text = "\n".join(plr.mesh_section({"bed_mesh": ADAPTIVE_MESH}))
+        cfg = configparser.ConfigParser()
+        cfg.read_string(text)
+        prof = cfg["bed_mesh plr"]
+        # The mesh Klipper had in memory, loaded without interpolation
+        points = [[float(v) for v in line.split(",")]
+                  for line in prof["points"].strip().splitlines()]
+        self.assertEqual(points, ADAPTIVE_MESH["mesh_matrix"])
+        self.assertEqual((prof["x_count"], prof["y_count"], prof["mesh_x_pps"],
+                          prof["mesh_y_pps"], prof["algo"]), ("11", "11", "0", "0", "direct"))
+        self.assertEqual((prof["min_x"], prof["max_x"], prof["min_y"], prof["max_y"]),
+                         ("205.0", "225.0", "205.0", "225.0"))
+
+    def test_no_mesh(self):
+        self.assertEqual(plr.mesh_section({"bed_mesh": {"profile_name": ""}}), [])
+        with self.assertRaises(plr.PlanError):
+            plr.mesh_section({"bed_mesh": {"profile_name": "x", "mesh_matrix": [[]]}})
 
 
 class RealFileTest(unittest.TestCase):

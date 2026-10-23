@@ -75,13 +75,23 @@ includes with `[include plr/*.cfg]`. It contains:
 | `[gcode_macro PLR_RESUME]` | Resumes the print. Its variables `checkpoint`, `filename` and `error` describe it. |
 | `[gcode_macro PLR_DISCARD]` | Drops the recovery data. |
 | `[delayed_gcode PLR_WATCH]` | Drops the recovery data if another print is started instead. |
-| `[bed_mesh plr]` | The bed mesh that was active, usually the adaptive mesh from the print start. |
+| `[bed_mesh plr]` | The bed mesh that was active, usually the adaptive mesh from the print start (see below). |
 | `[save_variables]` | Stores `plr_handled` in `~/printer_data/plr/variables.cfg`. Left out if the configuration already has a `[save_variables]` section; then that one is used. |
 
 `PLR_RESUME`, `PLR_DISCARD` and starting another print each set
 `plr_handled` to the checkpoint's id. On the next boot `prepare` then removes
 `plr.cfg`. If the plan failed, `PLR_RESUME` only reports why, and
 `PLR_DISCARD` still works.
+
+The remaining layers have to be printed with the same bed mesh as the ones
+already on the bed, or there is a step between them. The bed can't be probed
+again because the part is in the way, and `BED_MESH_CALIBRATE ADAPTIVE=1`
+doesn't save its mesh as a profile. The checkpoint holds the mesh Klipper had
+in memory, though: `bed_mesh` reports the interpolated grid
+(`mesh_matrix`) that it corrects Z with. `[bed_mesh plr]` stores that grid
+with interpolation turned off (`algo: direct`, `mesh_pps: 0`), so loading it
+gives the same correction, to the 6 decimals Klipper reports. Fade
+(`fade_start`, `fade_end`) comes from `[bed_mesh]` as before.
 
 `PLR_RESUME` does the following:
 
