@@ -116,24 +116,24 @@ EOF
         (crontab -l 2>/dev/null | grep -v '/bin/sync'; echo "*/10 * * * * /bin/sync") | crontab -
     fi
 
-    # Create a power_monitor.service if not present
-    if [ ! -f "/etc/systemd/system/power_monitor.service" ]; then
-        sudo tee "/etc/systemd/system/power_monitor.service" > /dev/null <<EOF
-[Unit]
+    # Create or update power_monitor.service
+    POWER_MONITOR_UNIT="[Unit]
 Description=Power Cut Monitor and Safe Shutdown
 
 [Service]
 Type=simple
 ExecStart=/home/mks/OpenNept4une/img-config/power_monitor.sh
 User=root
-Restart=no
+Restart=on-failure
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
-EOF
+WantedBy=multi-user.target"
+    if [ "$(cat /etc/systemd/system/power_monitor.service 2>/dev/null)" != "$POWER_MONITOR_UNIT" ]; then
+        printf '%s\n' "$POWER_MONITOR_UNIT" | sudo tee "/etc/systemd/system/power_monitor.service" > /dev/null
         sudo systemctl daemon-reload > /dev/null 2>&1
         sudo systemctl enable power_monitor.service > /dev/null 2>&1
-        sudo systemctl start power_monitor.service > /dev/null 2>&1
+        sudo systemctl restart power_monitor.service > /dev/null 2>&1
     fi
 
     # Make systemd-logind ignore power key / long press (silent, idempotent)
