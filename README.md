@@ -7,7 +7,8 @@
 ## About this fork
 
 This is a fork of [OpenNeptune3D/OpenNept4une](https://github.com/OpenNeptune3D/OpenNept4une),
-used on two Neptune 4 Max. It follows upstream and adds:
+tested on the Neptune 4 Max with the stock Elegoo screen firmware 1.2.22. It
+follows upstream and adds:
 
 - **Power-loss monitor for the Plus/Max.** It reads Elegoo's power-sense pin
   and shuts the board down cleanly while the super-capacitor still powers it
