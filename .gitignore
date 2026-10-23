@@ -2,3 +2,4 @@
 /display/venv/
 /display/__pycache__/
 /printer-confs/output.cfg
+__pycache__/

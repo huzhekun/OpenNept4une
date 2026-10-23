@@ -54,7 +54,9 @@ runs `sync`, waits 2 s and calls `shutdown -h now`.
    super-capacitor line until systemd stops the script.
 
 Hooks run as root with nothing on stdin. Keep them well under a second: the
-hold-up time also has to cover the sync.
+hold-up time also has to cover the sync. The power-loss recovery hook
+(`50-plr-checkpoint`, see [power-loss-recovery.md](power-loss-recovery.md))
+takes about 0.4 s.
 
 ## Settings
 
