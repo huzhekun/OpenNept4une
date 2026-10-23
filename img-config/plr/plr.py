@@ -70,6 +70,8 @@ def paths(data_dir=DATA_DIR):
         "socket": os.path.join(data_dir, "comms", "klippy.sock"),
         "state_dir": os.path.join(data_dir, "plr"),
         "checkpoint": os.path.join(data_dir, "plr", "checkpoint.json"),
+        # Power-loss recovery is off while this exists (the screen's setting)
+        "disabled": os.path.join(data_dir, "plr", "disabled"),
         "variables": os.path.join(data_dir, "plr", "variables.cfg"),
         "config_dir": os.path.join(data_dir, "config"),
         "cfg": os.path.join(data_dir, "config", "plr", "plr.cfg"),
@@ -131,6 +133,9 @@ def write_atomic(path, text, owner_of=None):
 
 def cmd_checkpoint(args):
     p = paths(args.data_dir)
+    if os.path.exists(p["disabled"]):
+        log("power-loss recovery is turned off, nothing to save")
+        return 0
     try:
         client = KlippyClient(p["socket"])
         result = client.response(client.send(

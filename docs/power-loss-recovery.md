@@ -140,6 +140,15 @@ checkpoint hasn't been handled and no print is running, it shows the stock
 reason the print can't be resumed. Confirm runs `PLR_RESUME`, Cancel runs
 `PLR_DISCARD`.
 
+### Turning it off
+
+The **Power Loss Recovery** switch in the screen's advanced settings turns
+it off and on. Off, the power monitor only shuts the board down safely, as
+it did before: no checkpoint is saved and the print isn't stopped. The
+setting is the file `~/printer_data/plr/disabled`: while it exists, recovery
+is off, so `touch ~/printer_data/plr/disabled` and `rm` work as well.
+Turning it off doesn't drop a checkpoint already saved.
+
 ## Limits
 
 * While the power is off, the nozzle rests hot against the print, and usually

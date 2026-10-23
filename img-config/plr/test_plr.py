@@ -291,6 +291,18 @@ class MeshTest(unittest.TestCase):
             plr.mesh_section({"bed_mesh": {"profile_name": "x", "mesh_matrix": [[]]}})
 
 
+class CheckpointTest(unittest.TestCase):
+    def test_turned_off(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "plr"))
+            open(os.path.join(d, "plr", "disabled"), "w").close()
+            # Returns before connecting to Klipper, which isn't there
+            self.assertEqual(plr.main(["--data-dir", d, "checkpoint"]), 0)
+            self.assertFalse(os.path.exists(os.path.join(d, "plr", "checkpoint.json")))
+            os.remove(os.path.join(d, "plr", "disabled"))
+            self.assertEqual(plr.main(["--data-dir", d, "checkpoint"]), 1)
+
+
 class RealFileTest(unittest.TestCase):
     """Simulated power cuts at random places in a real file."""
 
