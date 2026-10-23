@@ -4,6 +4,11 @@
 # Define the flag file path
 FLAG_FILE="/boot/.OpenNept4une.txt"
 
+# Check whether a USB-C Klipper toolhead MCU is currently connected
+usb_c_toolhead_detected() {
+    compgen -G "/dev/serial/by-id/usb-Klipper_stm32f103xe_*" > /dev/null
+}
+
 # Function to select an option
 select_option() {
     local -n ref=$1
@@ -43,20 +48,64 @@ else
     # Interactive mode for motor current and PCB version if applicable
     if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
         [ -z "$motor_current" ] && select_option motor_current "Select the stepper motor current:" "0.8" "1.2"
-        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1"
+        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "1.0" "1.1" "1.4"
+    else
+        [ -z "$pcb_version" ] && select_option pcb_version "Select the PCB version:" "2.0" "2.3"
     fi
+
+    # Interactive selection of printhead/toolhead variant (applies to all models)
+    if [ -z "$toolhead_variant" ]; then
+        while true; do
+            select_option toolhead_variant "Select your printhead/toolhead type:" "Ribbon-cable printhead (original)" "USB-C Klipper printhead (separate toolhead MCU)"
+            case "$toolhead_variant" in
+                "USB-C Klipper printhead (separate toolhead MCU)")
+                    if usb_c_toolhead_detected; then
+                        toolhead_variant="usb-c"
+                        break
+                    else
+                        echo -e "No USB-C Klipper toolhead detected (expected /dev/serial/by-id/usb-Klipper_stm32f103xe_*). Connect the toolhead and try again, or select the ribbon-cable printhead."
+                        toolhead_variant=""
+                    fi
+                    ;;
+                *)
+                    toolhead_variant="ribbon"
+                    break
+                    ;;
+            esac
+        done
+    fi
+fi
+
+# Default/normalize toolhead_variant for headless mode (backward compatible:
+# if not provided, assume the original ribbon-cable printhead).
+case "$toolhead_variant" in
+    usb-c|usbc) toolhead_variant="usb-c" ;;
+    *) toolhead_variant="ribbon" ;;
+esac
+
+# Headless safety check: refuse to persist a usb-c selection if no USB-C
+# toolhead MCU is currently detected.
+if [ "$toolhead_variant" = "usb-c" ] && ! usb_c_toolhead_detected; then
+    echo "ERROR: --toolhead usb-c specified but no USB-C Klipper toolhead detected (expected /dev/serial/by-id/usb-Klipper_stm32f103xe_*)."
+    exit 1
 fi
 
 # Define FLAG_LINE before generating configuration
 if [[ "$model_key" = "n4" || "$model_key" = "n4pro" ]]; then
     FLAG_LINE="${model_key}-${motor_current}A-v${pcb_version}"
 else
-    pcb_version="2.0"
+    [ -z "$pcb_version" ] && pcb_version="2.0"
     FLAG_LINE="${model_key}-v${pcb_version}"
 fi
 
 # Capitalize the 1st and 3rd letters of the model_key
 FLAG_LINE=$(echo "$FLAG_LINE" | sed -E 's/^(n)(4)(.)(.*)/\U\1\2\3\E\4/')
+
+# Append the toolhead variant ("ribbon" or "usb-c" -> "usbc") so OpenNept4une.sh
+# can regenerate the right printer.cfg on headless reflashes without re-asking.
+toolhead_suffix="ribbon"
+[ "$toolhead_variant" = "usb-c" ] && toolhead_suffix="usbc"
+FLAG_LINE="${FLAG_LINE}-t${toolhead_suffix}"
 
 echo "DEBUG: FLAG_LINE is $FLAG_LINE"
 

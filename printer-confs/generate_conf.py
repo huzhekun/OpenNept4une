@@ -1,3 +1,4 @@
+import glob
 import os
 import re
 import sys
@@ -8,6 +9,68 @@ from datetime import datetime
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 variable_regex = re.compile(r'{{\s*(\w+)\s*}}')
+
+USB_TOOLHEAD_SERIAL_GLOB = "/dev/serial/by-id/usb-Klipper_stm32f103xe_*"
+
+# section_*.cfg name -> toolhead-specific replacement filename (relative to
+# the toolheads/ folder), keyed by toolhead variant -> printer model group.
+USB_C_FAN_SECTION_BY_MODEL = {
+    'n4': 'section_fans_usb-c_n4.cfg',
+    'n4pro': 'section_fans_usb-c_n4.cfg',
+    'n4plus': 'section_fans_usb-c_n4plus.cfg',
+    'n4max': 'section_fans_usb-c_n4plus.cfg',
+}
+
+# Each model has its own dual lis2dw (THR) + adxl345 (rpi) accelerometer
+# layout for usb-c, so this is keyed per-model rather than grouped.
+USB_C_ACCEL_SECTION_BY_MODEL = {
+    'n4': 'section_accel_usb-c_n4.cfg',
+    'n4pro': 'section_accel_usb-c_n4pro.cfg',
+    'n4plus': 'section_accel_usb-c_n4plus.cfg',
+    'n4max': 'section_accel_usb-c_n4max.cfg',
+}
+
+
+def get_toolhead_conf(toolhead):
+    """
+    Read the pin-mapping/placeholder file for the selected toolhead variant
+    (printer-confs/toolheads/<toolhead>.cfg). Exits with an error if it's
+    missing or the variant is unrecognized.
+    """
+    toolhead_path = os.path.join(script_dir, 'toolheads', f"{toolhead}.cfg")
+    if not os.path.isfile(toolhead_path):
+        print(f"ERROR: unknown toolhead variant '{toolhead}' ({toolhead_path} does not exist).")
+        sys.exit(1)
+    with open(toolhead_path, 'r') as f:
+        return f.readlines()
+
+
+def generate_mcu_id_cfg():
+    """
+    Detect the USB-C toolhead's Klipper MCU serial-by-id path and write
+    ~/printer_data/config/MCU_ID.cfg defining [mcu THR]. Exits with an error
+    if no toolhead (or more than one) is found.
+    """
+    matches = sorted(glob.glob(USB_TOOLHEAD_SERIAL_GLOB))
+    if len(matches) == 0:
+        print(f"ERROR: no USB-C toolhead found matching {USB_TOOLHEAD_SERIAL_GLOB}.")
+        print("Connect the USB-C toolhead and ensure it has Klipper firmware flashed, then try again.")
+        sys.exit(1)
+    if len(matches) > 1:
+        print(f"ERROR: multiple USB-C toolhead devices found matching {USB_TOOLHEAD_SERIAL_GLOB}:")
+        for m in matches:
+            print(f"  {m}")
+        print("Disconnect the extra device(s) and try again.")
+        sys.exit(1)
+
+    mcu_id_dir = os.path.expanduser('~/printer_data/config')
+    os.makedirs(mcu_id_dir, exist_ok=True)
+    mcu_id_path = os.path.join(mcu_id_dir, 'MCU_ID.cfg')
+    with open(mcu_id_path, 'w') as f:
+        f.write("[mcu THR]\n")
+        f.write(f"serial: {matches[0]}\n")
+        f.write("restart_method: command\n")
+    print(f"Wrote {mcu_id_path} (serial: {matches[0]})")
 
 
 def get_printer_conf(printer_model, current):
@@ -36,18 +99,25 @@ def get_printer_conf(printer_model, current):
     return lines
 
 
-def generate_conf(printer_model, current):
+def generate_conf(printer_model, current, toolhead='ribbon'):
     """
     Generate output.cfg by:
       1. Loading base.cfg
-      2. Replacing {{ key }} placeholders with values from printer-specific files
-      3. Injecting any section_*.cfg snippets
+      2. Replacing {{ key }} placeholders with values from the toolhead variant
+         file and printer-specific files
+      3. Injecting any section_*.cfg snippets (with toolhead-specific overrides
+         for sections such as "fans")
       4. Removing any leftover placeholders (entire lines)
       5. Writing a timestamped header + result to output.cfg
       6. Appending the SAVE_CONFIG section from ~/printer_data/config/printer.cfg
       7. Post-processing output.cfg to comment out mismatched SAVE_CONFIG entries
+
+    For the "usb-c" toolhead variant, also (re)generates
+    ~/printer_data/config/MCU_ID.cfg from the detected USB-C toolhead serial.
     """
-    print("Generating config for " + printer_model + ("" if not current else " with current " + current))
+    print("Generating config for " + printer_model
+          + ("" if not current else " with current " + current)
+          + f" (toolhead: {toolhead})")
     base_conf_path = os.path.join(script_dir, 'base.cfg')
     output_cfg_path = os.path.join(script_dir, 'output.cfg')
 
@@ -57,24 +127,48 @@ def generate_conf(printer_model, current):
     with open(base_conf_path, 'r') as f:
         base_conf = f.read()
 
-    # Read printer-specific files
+    if toolhead == 'usb-c':
+        generate_mcu_id_cfg()
+
+    # Read toolhead pin-mapping/placeholder file, then printer-specific files
+    toolhead_conf = get_toolhead_conf(toolhead)
     printer_conf = get_printer_conf(printer_model, current)
 
     # Replace placeholders using regex so whitespace variations are accepted
-    for line in printer_conf:
+    for line in toolhead_conf + printer_conf:
         if '=' not in line:
             continue
         key, value = [part.strip() for part in line.split('=', 1)]
         # Convert literal "\n" in the value into a real newline, if present
         value = value.replace(r'\n', '\n')
+        if value == '':
+            # Drop the whole line if it consists solely of this placeholder,
+            # so an empty value (e.g. ribbon's toolhead_mcu_include) doesn't
+            # leave a stray blank line behind.
+            line_pattern = r'[ \t]*{{\s*' + re.escape(key) + r'\s*}}[ \t]*\n'
+            base_conf = re.sub(line_pattern, '', base_conf)
         pattern = r'{{\s*' + re.escape(key) + r'\s*}}'
         base_conf = re.sub(pattern, value, base_conf)
+
+    # Sections whose normal per-model file is replaced by a toolhead-specific
+    # snippet for this variant (e.g. fan layout changes for usb-c).
+    section_overrides = {}
+    if toolhead == 'usb-c':
+        fan_section_file = USB_C_FAN_SECTION_BY_MODEL.get(printer_model)
+        if fan_section_file:
+            section_overrides['fans'] = os.path.join(script_dir, 'toolheads', fan_section_file)
+
+        accel_section_file = USB_C_ACCEL_SECTION_BY_MODEL.get(printer_model)
+        if accel_section_file:
+            section_overrides['accelerometer'] = os.path.join(script_dir, 'toolheads', accel_section_file)
 
     # Inject any section_*.cfg snippets from the printer_model folder
     folder = os.path.join(script_dir, printer_model)
     for fname in os.listdir(folder):
         if fname.startswith('section_') and fname.endswith('.cfg'):
             section_name = fname[len('section_'):-len('.cfg')]  # e.g. "electronics"
+            if section_name in section_overrides:
+                continue  # replaced below by a toolhead-specific snippet
             section_path = os.path.join(folder, fname)
             try:
                 with open(section_path, 'r') as f:
@@ -83,6 +177,16 @@ def generate_conf(printer_model, current):
                 base_conf = re.sub(pattern, section_conf, base_conf)
             except (FileNotFoundError, IOError):
                 print(f"Warning: '{fname}' was not found or unreadable; skipping.")
+
+    # Inject toolhead-specific section overrides
+    for section_name, section_path in section_overrides.items():
+        try:
+            with open(section_path, 'r') as f:
+                section_conf = f.read().strip()
+            pattern = r'{{\s*' + re.escape(section_name) + r'\s*}}'
+            base_conf = re.sub(pattern, section_conf, base_conf)
+        except (FileNotFoundError, IOError):
+            print(f"Warning: '{section_path}' was not found or unreadable; skipping.")
 
     # Remove any leftover lines containing unreplaced placeholders
     unreplaced = variable_regex.findall(base_conf)
@@ -93,7 +197,8 @@ def generate_conf(printer_model, current):
     # Add a timestamped header comment
     timestamp = datetime.now().isoformat(timespec='seconds')
     header_comment = (
-        f"# Auto-generated on {timestamp} | printer_model: {printer_model} | current: {current or 'None'}\n\n"
+        f"# Auto-generated on {timestamp} | printer_model: {printer_model} | "
+        f"current: {current or 'None'} | toolhead: {toolhead}\n\n"
     )
 
     # Write header + base_conf to output.cfg
@@ -222,16 +327,42 @@ class ConfigProcessor:
 
 
 if __name__ == '__main__':
+    args = sys.argv[1:]
+
+    # Standalone helper: just (re)write ~/printer_data/config/MCU_ID.cfg from
+    # the currently-connected USB-C toolhead and exit. Used by
+    # rpi-mcu-install.sh right after flashing the toolhead MCU, so MCU_ID.cfg
+    # is up to date even before the next full config regeneration.
+    if args == ['--write-mcu-id']:
+        generate_mcu_id_cfg()
+        sys.exit(0)
+
     # Remove old output.cfg if it exists
     try:
         os.remove(os.path.join(script_dir, 'output.cfg'))
     except OSError:
         pass  # nothing to remove
 
-    if len(sys.argv) < 2:
-        print("Usage: python generate_printer_cfg.py <printer_model> [<override>]")
+    # Pull out an optional "--toolhead <ribbon|usb-c>" flag from anywhere in
+    # the argument list; remaining args stay positional for backwards
+    # compatibility with existing callers.
+    toolhead = 'ribbon'
+    if '--toolhead' in args:
+        idx = args.index('--toolhead')
+        if idx + 1 >= len(args):
+            print("ERROR: --toolhead requires a value (ribbon or usb-c).")
+            sys.exit(1)
+        toolhead = args[idx + 1]
+        del args[idx:idx + 2]
+
+    if toolhead not in ('ribbon', 'usb-c'):
+        print(f"ERROR: invalid --toolhead value '{toolhead}' (expected 'ribbon' or 'usb-c').")
         sys.exit(1)
 
-    printer_model = sys.argv[1]
-    current = sys.argv[2] if len(sys.argv) > 2 else None
-    generate_conf(printer_model, current)
+    if len(args) < 1:
+        print("Usage: python generate_conf.py <printer_model> [<current>] [--toolhead ribbon|usb-c]")
+        sys.exit(1)
+
+    printer_model = args[0]
+    current = args[1] if len(args) > 1 else None
+    generate_conf(printer_model, current, toolhead)
