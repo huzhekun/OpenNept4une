@@ -61,6 +61,11 @@ the file moved the toolhead).
 If the print was paused when the power failed, it resumes at the file position
 itself, because Klipper had finished every move before it.
 
+If Klipper hadn't read the file's first print move (an extruding X/Y move)
+yet, the power failed during the start G-code (heating, homing, probing) and
+nothing was printed, so there's nothing to resume: `prepare` writes no
+`plr.cfg`, and the screen doesn't ask.
+
 Reading the file takes about 2 s on the printer for the last 512 KiB, plus
 about 0.5 s per further MiB. The result is cached in the generated config, so
 only the first boot after a power cut is delayed.

@@ -61,6 +61,10 @@ RESUME_SPEED = 25
 NEXT_LAYER_BYTES = 8 * 1024 * 1024
 
 
+class NotStarted(Exception):
+    """The power failed before the print had printed anything."""
+
+
 class PlanError(Exception):
     pass
 
@@ -572,6 +576,20 @@ def load_checkpoint(path):
     return cp
 
 
+def first_print_move(path, end):
+    """Offset of the first extruding XY move, or None if there's none up to
+    end."""
+    for offset, text in iter_lines(path):
+        if offset > end:
+            return None
+        cmd, params, _ = split_command(text)
+        if cmd in ("G1", "G2", "G3") and ("X" in params or "Y" in params):
+            e = _num(params.get("E", "")) if "E" in params else None
+            if e is not None and e > 0:
+                return offset
+    return None
+
+
 def plan(cp, gcode_path=None):
     """Work out where and how to resume. Returns a dict."""
     st = cp["status"]
@@ -586,6 +604,12 @@ def plan(cp, gcode_path=None):
     fw = st.get("firmware_retraction", {})
     fp = cp["file_position"]
     paused = cp["state"] == "paused"
+    first = first_print_move(path, fp)
+    if first is None or fp <= first:
+        # Klipper hadn't read a print move yet, so it was still in the start
+        # G-code (heating, homing, probing): there's nothing to continue
+        raise NotStarted("the power failed before printing started (file position %d, "
+                         "first print move %s)" % (fp, "none" if first is None else first))
     ef = gm.get("extrude_factor", 1.0) or 1.0
 
     # Pass 1: read up to and including the line at the file position
@@ -1044,6 +1068,10 @@ def cmd_prepare(args):
         log(describe(pl))
         for w in pl["warnings"]:
             log("warning: " + w)
+    except NotStarted as e:
+        log("nothing to resume: %s" % e)
+        remove(cfg_path)
+        return 0
     except PlanError as e:
         pl = e
         log("can't resume: %s" % e)
@@ -1063,6 +1091,9 @@ def cmd_plan(args):
     cp = load_checkpoint(args.checkpoint)
     try:
         pl = plan(cp, args.gcode)
+    except NotStarted as e:
+        log("nothing to resume: %s" % e)
+        return 0
     except PlanError as e:
         log("can't resume: %s" % e)
         return 1

@@ -5,6 +5,7 @@ it.
 """
 
 import configparser
+import json
 import math
 import os
 import random
@@ -208,6 +209,30 @@ class SampleTest(unittest.TestCase):
         cp["status"]["motion_report"]["live_position"][0] += 50
         with self.assertRaises(plr.PlanError):
             plr.plan(cp, self.path)
+
+    def test_cut_before_printing(self):
+        # Klipper still in PRINT_START: nothing printed, nothing to offer
+        cp, m = make_checkpoint(self.path, self.offsets["G1 X110 Y110 E1.0"], -1, 0.5)
+        cp["file_position"] = self.offsets["G90"]
+        with self.assertRaises(plr.NotStarted):
+            plr.plan(cp, self.path)
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "plr"))
+            os.makedirs(os.path.join(d, "config", "plr"))
+            cfg = os.path.join(d, "config", "plr", "plr.cfg")
+            open(cfg, "w").close()  # left from an earlier power cut
+            cp["file_path"] = self.path
+            with open(os.path.join(d, "plr", "checkpoint.json"), "w") as f:
+                json.dump(cp, f)
+            self.assertEqual(plr.main(["--data-dir", d, "prepare"]), 0)
+            self.assertFalse(os.path.exists(cfg))
+
+    def test_cut_after_first_print_move(self):
+        first = next(o for o, text in plr.iter_lines(self.path) if text == "G1 X110 Y90 E1.0")
+        self.assertEqual(plr.first_print_move(self.path, first), first)
+        self.assertIsNone(plr.first_print_move(self.path, first - 1))
+        cp, m = make_checkpoint(self.path, self.offsets["G1 X110 Y110 E1.0"], first, 0.5)
+        self.assertEqual(plr.plan(cp, self.path)["resume_offset"], first)
 
     def test_paused(self):
         fp = self.offsets["M106 S128"]
