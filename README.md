@@ -17,6 +17,7 @@
 > **About this fork.** It tracks upstream OpenNept4une with these changes:
 > - The power-loss monitor uses Elegoo's power-sense pin on the Neptune 4 Plus/Max and shuts down cleanly on a power cut ([docs/power-monitor.md](docs/power-monitor.md)).
 > - Power-loss recovery: a print interrupted by a power cut can be continued from the line it stopped at ([docs/power-loss-recovery.md](docs/power-loss-recovery.md)).
+> - The CPU runs the schedutil governor instead of the kernel's default, performance, which keeps it at its top speed even while idle (`cpu-governor.service`, `img-config/cpu-governor.sh`).
 > - The touch-screen service comes from [huzhekun/openneptune_display_connector](https://github.com/huzhekun/openneptune_display_connector), which adds on-screen Wi-Fi setup. An existing checkout keeps whatever repository it already tracks.
 
 
