@@ -15,12 +15,14 @@ FLAG_FILE="/boot/.OpenNept4une.txt"
 MODEL_FROM_FLAG=$(grep -E '^N4|^n4' "$FLAG_FILE" 2>/dev/null)
 KERNEL_FROM_FLAG=$(grep 'Linux' "$FLAG_FILE" 2>/dev/null | awk '{split($3,a,"-"); print a[1]}')
 
-OPENNEPT4UNE_REPO="https://github.com/OpenNeptune3D/OpenNept4une.git"
+# Keep whatever repository an existing checkout tracks (e.g. a fork)
+repo_url() { git -C "$1" remote get-url origin 2>/dev/null || echo "$2"; }
 OPENNEPT4UNE_DIR="${HOME}/OpenNept4une"
-DISPLAY_CONNECTOR_REPO="https://github.com/OpenNeptune3D/display_connector.git"
+OPENNEPT4UNE_REPO="$(repo_url "$OPENNEPT4UNE_DIR" "https://github.com/OpenNeptune3D/OpenNept4une.git")"
 DISPLAY_CONNECTOR_DIR="${HOME}/display_connector"
-DISPLAY_FIRMWARE_REPO="https://github.com/OpenNeptune3D/display_firmware.git"
+DISPLAY_CONNECTOR_REPO="$(repo_url "$DISPLAY_CONNECTOR_DIR" "https://github.com/OpenNeptune3D/display_connector.git")"
 DISPLAY_FIRMWARE_DIR="${HOME}/display_firmware"
+DISPLAY_FIRMWARE_REPO="$(repo_url "$DISPLAY_FIRMWARE_DIR" "https://github.com/OpenNeptune3D/display_firmware.git")"
 
 current_branch=""
 
