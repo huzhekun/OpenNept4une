@@ -33,6 +33,47 @@ forks keeps updating from them, and one set up from upstream stays on
 upstream. The forks are only the default for a new checkout. The Releases,
 Wiki and Discord links below are upstream's.
 
+### Switching an existing install to this fork
+
+A printer already running OpenNept4une can switch without flashing anything:
+the forks work with the stock Elegoo screen firmware. Over SSH, as `mks`:
+
+```sh
+# OpenNept4une
+cd ~/OpenNept4une
+git remote set-url origin https://github.com/huzhekun/OpenNept4une.git
+git fetch origin
+git checkout -B main origin/main
+
+# Display connector
+cd ~/display_connector
+git remote set-url origin https://github.com/huzhekun/openneptune_display_connector.git
+git fetch origin
+git checkout -B main origin/main
+sudo sh ~/display_connector/wifi-permissions-setup.sh mks
+
+# Installs the services and points Moonraker's update manager at the forks
+~/OpenNept4une/OpenNept4une.sh update_repo
+sudo reboot
+```
+
+`wifi-permissions-setup.sh` lets the display service set up Wi-Fi. The script
+run installs the power monitor, power-loss recovery and `cpu-governor.service`,
+adds `[include plr/*.cfg]` to `printer.cfg`, and rewrites the
+`[update_manager OpenNept4une]` and `[update_manager display]` sections of
+`moonraker.conf`, so updates from Mainsail or Fluidd come from the forks.
+
+`git checkout -B main origin/main` resets the local `main` branch to the
+fork's, so back up any local commits or changes in those two directories
+first. The power monitor and power-loss recovery work on the Plus and Max
+only. The screen features are tested with firmware 1.2.22; the connector also
+accepts Elegoo 1.2.11 to 1.2.18.
+
+To switch back, set the remotes to
+`https://github.com/OpenNeptune3D/OpenNept4une.git` and
+`https://github.com/OpenNeptune3D/display_connector.git`, check out their
+branch the same way, and run `OpenNept4une.sh update_repo` again.
+
 ---
 
 <div align="center">
