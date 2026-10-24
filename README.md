@@ -33,6 +33,54 @@ forks keeps updating from them, and one set up from upstream stays on
 upstream. The forks are only the default for a new checkout. The Releases,
 Wiki and Discord links below are upstream's.
 
+### Choices this fork makes
+
+These differ from upstream or from the stock Elegoo firmware, on purpose:
+
+- **The touch screen goes completely dark after 20 minutes without use.**
+  This is normal: touch it anywhere to turn it back on (the touch doesn't
+  press anything). It turns on by itself when a print starts or ends, or the
+  printer needs attention, and stays on during prints. It protects the LCD
+  from burn-in, which the stock dimming doesn't. Turning off **Backlight** in
+  the screen's advanced settings keeps it on; see the
+  [display connector's README](https://github.com/huzhekun/openneptune_display_connector#choices-this-fork-makes)
+  to change the times.
+- **A power cut stops the print at once.** When the power monitor sees the
+  supply fail during a print, it saves the state and sends an emergency stop,
+  instead of letting Klipper run on for the few seconds the super-capacitor
+  lasts. The toolhead then stops within a few milliseconds of the saved
+  position, and the heaters go off. The nozzle can't retract or lift first:
+  Klipper has already sent up to 2 s of motion to the mainboard, and the
+  motors lose power with the 24 V supply. Expect a small blob where it stopped.
+- **The resume heats before it moves.** It heats the bed, then the nozzle,
+  to the print temperatures before any axis moves, so the nozzle comes free
+  of the plastic it stopped in. Only X and Y are homed; Z keeps its position
+  on the lead screws, because the probe would hit the print.
+- **It reuses the bed mesh, not a new one.** The resume loads the exact mesh
+  Klipper had in memory at the cut, including an adaptive mesh from the print
+  start, so the new layers line up with the old ones. The bed isn't probed
+  again.
+- **It repeats the interrupted line.** The print continues from the start of
+  the G-code line that was printing, which may over-extrude that segment a
+  little, rather than leave a gap.
+- **The resumed layer is printed slowly.** The rest of that layer runs at 25%
+  speed, so the new plastic bonds to the cooled layer below. Full speed
+  returns at the next layer. A 30 mm purge at the back-left corner replaces a
+  prompt to clean the nozzle.
+- **Only real prints are offered.** A cut during the start G-code (heating,
+  homing, probing) before anything was printed doesn't ask to resume.
+- **Recovery is on by default.** The **Power Loss Recovery** switch in the
+  screen's advanced settings turns it off. Off, the power monitor still shuts
+  the board down cleanly, but doesn't stop the print or save it.
+- **The CPU runs on schedutil.** The kernel starts in performance, which
+  keeps the CPU at full speed while idle. Klipper's step timing runs on the
+  mainboard MCU, so it doesn't depend on the host CPU's clock.
+- **Only these two repositories come from the forks.** Klipper, Moonraker,
+  Fluidd, Mainsail, KAMP and Mobileraker update from their usual sources.
+
+The display connector's own choices (screen sleep, Wi-Fi) are listed in
+[its README](https://github.com/huzhekun/openneptune_display_connector#choices-this-fork-makes).
+
 ### Switching an existing install to this fork
 
 A printer already running OpenNept4une can switch without flashing anything:
