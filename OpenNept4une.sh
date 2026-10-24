@@ -137,6 +137,36 @@ WantedBy=multi-user.target"
         sudo systemctl restart power_monitor.service > /dev/null 2>&1
     fi
 
+    # Power-loss recovery: the power_monitor hook saves the print, and at boot
+    # plr-prepare.service turns that into PLR_RESUME / PLR_DISCARD macros
+    PLR_DIR="${HOME}/OpenNept4une/img-config/plr"
+    sudo mkdir -p /etc/power_monitor.d
+    sudo ln -sfn "${PLR_DIR}/plr-checkpoint.sh" /etc/power_monitor.d/50-plr-checkpoint
+    mkdir -p "${HOME}/printer_data/plr" "${HOME}/printer_data/config/plr"
+    PLR_PREPARE_UNIT="[Unit]
+Description=Power-loss recovery: prepare the resume macros
+Before=klipper.service
+
+[Service]
+Type=oneshot
+User=mks
+ExecStart=/usr/bin/python3 -I ${PLR_DIR}/plr.py prepare
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target"
+    if [ "$(cat /etc/systemd/system/plr-prepare.service 2>/dev/null)" != "$PLR_PREPARE_UNIT" ]; then
+        printf '%s\n' "$PLR_PREPARE_UNIT" | sudo tee "/etc/systemd/system/plr-prepare.service" > /dev/null
+        sudo systemctl daemon-reload > /dev/null 2>&1
+        sudo systemctl enable plr-prepare.service > /dev/null 2>&1
+    fi
+    PRINTER_CFG="${HOME}/printer_data/config/printer.cfg"
+    if [ -f "$PRINTER_CFG" ] && ! grep -q '^\[include plr/\*\.cfg\]' "$PRINTER_CFG"; then
+        # Before the first include (or section), never after the SAVE_CONFIG block
+        awk 'done == 0 && /^\[/ { print "[include plr/*.cfg]             ; power-loss recovery macros, only present after a power cut"; done = 1 } { print }' \
+            "$PRINTER_CFG" > "${PRINTER_CFG}.plr" && mv "${PRINTER_CFG}.plr" "$PRINTER_CFG"
+    fi
+
     # Make systemd-logind ignore power key / long press (silent, idempotent)
     LOGIND_CONF="/etc/systemd/logind.conf"
     if [ -f "$LOGIND_CONF" ]; then
