@@ -10,9 +10,10 @@ This is a fork of [OpenNeptune3D/OpenNept4une](https://github.com/OpenNeptune3D/
 tested on the Neptune 4 Max with the stock Elegoo screen firmware 1.2.22. It
 follows upstream and adds:
 
-- **Power-loss monitor for the Plus/Max.** It reads Elegoo's power-sense pin
-  and shuts the board down cleanly while the super-capacitor still powers it
-  ([docs/power-monitor.md](docs/power-monitor.md)).
+- **Power-loss monitor that works on the Plus/Max.** On those boards it now
+  reads the power-sense pin Elegoo's firmware uses, and shuts the board down
+  cleanly while the super-capacitor still powers it. The Neptune 4 and 4 Pro
+  keep the pins they had ([docs/power-monitor.md](docs/power-monitor.md)).
 - **Power-loss recovery.** When the power fails during a print, the state is
   saved and the print stopped. After the power returns, the screen offers to
   continue from the start of the G-code line that was printing, with the same
@@ -113,9 +114,12 @@ adds `[include plr/*.cfg]` to `printer.cfg`, and rewrites the
 
 `git checkout -B main origin/main` resets the local `main` branch to the
 fork's, so back up any local commits or changes in those two directories
-first. The power monitor and power-loss recovery work on the Plus and Max
-only. The screen features are tested with firmware 1.2.22; the connector also
-accepts Elegoo 1.2.11 to 1.2.18.
+first. Everything is tested on the Neptune 4 Max with screen firmware 1.2.22.
+Power-loss recovery isn't specific to a model, but it's untested on the
+Neptune 4 and 4 Pro. Their power monitor uses the same pins as before, and
+their super-capacitor's hold-up time hasn't been measured. On-screen Wi-Fi is
+Plus/Max only. The connector also accepts Elegoo screen firmware 1.2.11 to
+1.2.18.
 
 To switch back, set the remotes to
 `https://github.com/OpenNeptune3D/OpenNept4une.git` and
