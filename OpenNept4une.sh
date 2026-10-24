@@ -137,6 +137,25 @@ EOF
         sudo systemctl start power_monitor.service > /dev/null 2>&1
     fi
 
+    # CPU governor: schedutil instead of the kernel's default, performance,
+    # which keeps the CPU at its top speed even while idle
+    CPU_GOVERNOR_UNIT="[Unit]
+Description=Set the CPU frequency governor
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/mks/OpenNept4une/img-config/cpu-governor.sh schedutil
+
+[Install]
+WantedBy=multi-user.target"
+    if [ "$(cat /etc/systemd/system/cpu-governor.service 2>/dev/null)" != "$CPU_GOVERNOR_UNIT" ]; then
+        printf '%s\n' "$CPU_GOVERNOR_UNIT" | sudo tee "/etc/systemd/system/cpu-governor.service" > /dev/null
+        sudo systemctl daemon-reload > /dev/null 2>&1
+        sudo systemctl enable cpu-governor.service > /dev/null 2>&1
+        sudo systemctl restart cpu-governor.service > /dev/null 2>&1
+    fi
+
     # Make systemd-logind ignore power key / long press (silent, idempotent)
     LOGIND_CONF="/etc/systemd/logind.conf"
     if [ -f "$LOGIND_CONF" ]; then
